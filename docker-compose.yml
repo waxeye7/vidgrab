@@ -1,0 +1,65 @@
+services:
+  vidgrab:
+    build: .
+    container_name: vidgrab
+    volumes:
+      - ./downloads:/downloads
+    environment:
+      - YT_DLP_POT_PROVIDER_URL=http://pot-provider:4416
+      - YT_DLP_SSRF_PROXY=socks5h://warp-proxy:1080
+    depends_on:
+      warp-proxy:
+        condition: service_started
+      pot-provider:
+        condition: service_started
+    networks:
+      - vidgrab-net
+    restart: "no"
+
+  warp-proxy:
+    image: caomingjun/warp
+    container_name: warp-proxy
+    restart: unless-stopped
+    environment:
+      WARP_SLEEP: "2"
+    cap_add:
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+      - MKNOD
+    volumes:
+      - warp_data:/var/lib/cloudflare-warp
+    tmpfs:
+      - /tmp:size=64m
+      - /run:size=16m
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    networks:
+      - vidgrab-net
+
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider
+    container_name: pot-provider
+    restart: unless-stopped
+    init: true
+    environment:
+      TOKEN_TTL: "21600"
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - vidgrab-net
+
+volumes:
+  warp_data:
+
+networks:
+  vidgrab-net:
+    driver: bridge

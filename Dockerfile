@@ -41,11 +41,11 @@ ENV PATH=/opt/yt-dlp-venv/bin:$PATH
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN npm ci || npm install
 
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 RUN mkdir -p /downloads
 

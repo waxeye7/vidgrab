@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { stat, rename, rm } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { resolve, join } from "node:path";
 
 const DEFAULT_USER_AGENT =
@@ -223,19 +223,17 @@ function spawnYtdlp(args: string[], timeoutMs: number): Promise<SpawnResult> {
   });
 }
 
-async function findDownloadedFile(destinationPath: string): Promise<string | null> {
-  const candidates = [
-    destinationPath.replace(/\.mp4$/i, ".temp.mp4"),
-    destinationPath,
-    destinationPath.replace(/\.mp4$/i, ".mkv"),
-    destinationPath.replace(/\.mp4$/i, ".webm"),
-    destinationPath.replace(/\.mp4$/i, ".mov"),
-  ];
+const VIDEO_EXTENSIONS = /\.(mp4|mkv|webm|mov|avi)$/i;
 
-  for (const p of candidates) {
+async function findNewVideoFile(outputDir: string, existingFiles: Set<string>): Promise<string | null> {
+  const entries = await readdir(outputDir);
+  for (const name of entries) {
+    if (!VIDEO_EXTENSIONS.test(name)) continue;
+    const fullPath = join(outputDir, name);
+    if (existingFiles.has(fullPath)) continue;
     try {
-      const s = await stat(p);
-      if (s.size > 0) return p;
+      const s = await stat(fullPath);
+      if (s.size > 0) return fullPath;
     } catch {}
   }
   return null;
@@ -252,9 +250,15 @@ export async function downloadVideo(opts: DownloadOptions): Promise<string> {
   const cookiesFile = resolveCookiesFile();
   const candidatePool = buildCandidatePool(proxy, cookiesFile);
 
-  const filename = opts.filename || "%(title).200s.%(ext)s";
-  const destinationPath = resolve(opts.outputDir, filename.endsWith(".mp4") ? filename : `${filename}.mp4`);
-  const outputTemplate = destinationPath.replace(/\.mp4$/i, ".%(ext)s");
+  const outputTemplate = resolve(opts.outputDir, opts.filename || "%(title).200s.%(ext)s");
+
+  let existingFiles: Set<string>;
+  try {
+    const entries = await readdir(opts.outputDir);
+    existingFiles = new Set(entries.map((e) => resolve(opts.outputDir, e)));
+  } catch {
+    existingFiles = new Set();
+  }
 
   console.log(`[vidgrab] Starting download: ${opts.url}`);
   console.log(`[vidgrab] Proxy: ${proxy}`);
@@ -282,21 +286,16 @@ export async function downloadVideo(opts: DownloadOptions): Promise<string> {
           throw new Error(`yt-dlp exited with code ${result.exitCode}: ${result.stderr.slice(-500)}`);
         }
 
-        const downloadedPath = await findDownloadedFile(destinationPath);
+        const downloadedPath = await findNewVideoFile(opts.outputDir, existingFiles);
         if (!downloadedPath) {
           throw new Error("yt-dlp completed but no output file found");
         }
 
         const fileInfo = await stat(downloadedPath);
-        if (downloadedPath !== destinationPath) {
-          await rm(destinationPath, { force: true }).catch(() => undefined);
-          await rename(downloadedPath, destinationPath);
-        }
-
         const sizeMB = (fileInfo.size / 1024 / 1024).toFixed(1);
         console.log();
-        console.log(`[vidgrab] Download complete: ${destinationPath} (${sizeMB} MB)`);
-        return destinationPath;
+        console.log(`[vidgrab] Download complete: ${downloadedPath} (${sizeMB} MB)`);
+        return downloadedPath;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         console.error(`[vidgrab] Failed: ${lastError.message}`);
